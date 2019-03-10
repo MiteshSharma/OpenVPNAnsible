@@ -1,0 +1,62 @@
+- name: "Generate client certificate key"
+  become: yes
+  shell: source vars; ./build-key --batch {{client_name}}
+  args: 
+    chdir: "{{ ansible_env.HOME }}/openvpn-ca/"
+    executable: /bin/bash
+
+- name: "Create client certificate configs dir"
+  become: yes
+  file: 
+    owner: "{{ ansible_env.USER }}"
+    group: "{{ ansible_env.USER }}"
+    path: "{{ ansible_env.HOME }}/openvpn-ca/{{client_name}}"
+    state: directory
+    mode: 0700
+
+- name: "Copy client sample configs from remote host itself"
+  become: yes
+  copy:
+      remote_src: yes
+      src: /usr/share/doc/openvpn/examples/sample-config-files/client.conf
+      dest: "{{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn"
+
+- name: Set the server ip and port
+  lineinfile:
+    dest: "{{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn"
+    regexp: "^{{ item.regex | regex_escape() }}"
+    line: "{{ item.value }}"
+  with_items:
+    - { regex: 'remote my-server-1 1194', value: 'remote {{ groups["openVPN"][0] }} 1194' }
+    - { regex: ';user nobody', value: 'user nobody' }
+    - { regex: ';group nogroup', value: 'group nogroup' }
+    - { regex: 'ca ca.crt', value: '#ca ca.crt' }
+    - { regex: 'cert client.crt', value: '#cert client.crt' }
+    - { regex: 'key client.key', value: '#key client.key' }
+    - { regex: 'tls-auth ta.key 1', value: '#tls-auth ta.key 1' }
+
+- name: "Create client ovpn file"
+  become: yes
+  shell: "{{ item }}"
+  with_items:
+    - echo -e '<ca>' >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+    - cat {{ ansible_env.HOME }}/openvpn-ca/keys/ca.crt >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+    - echo -e '</ca>\n<cert>' >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+    - cat {{ ansible_env.HOME }}/openvpn-ca/keys/{{client_name}}.crt >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+    - echo -e '</cert>\n<key>' >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+    - cat {{ ansible_env.HOME }}/openvpn-ca/keys/{{client_name}}.key >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+    - echo -e '</key>\n<tls-auth>' >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+    - cat {{ ansible_env.HOME }}/openvpn-ca/keys/ta.key >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+    - echo -e '</tls-auth>' >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+    - echo -e 'key-direction 1' >> {{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{client_name}}.ovpn
+  args:
+    chdir: "{{ ansible_env.HOME }}/openvpn-ca/"
+    executable: /bin/bash
+
+- name: Fetch client configurations
+  fetch:
+    src: "{{ ansible_env.HOME }}/openvpn-ca/{{client_name}}/{{ item|basename }}"
+    dest: "{{ destination_key }}/"
+    flat: yes
+  with_items:
+    - "{{client_name}}.ovpn"

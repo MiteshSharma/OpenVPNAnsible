@@ -1,0 +1,19 @@
+---
+- name: install python2 on all instances
+  hosts: "*"
+  gather_facts: false
+  tasks:
+    - name: run apt-get update and install python
+      raw: "{{ item }}"
+      loop:
+        - sudo apt-get update
+        - sudo apt-get -y install python
+      become: true
+      ignore_errors: true
+
+- hosts: openVPN
+  become: yes
+  become_user: root
+  become_method: sudo
+  roles:
+    - openVPNClient

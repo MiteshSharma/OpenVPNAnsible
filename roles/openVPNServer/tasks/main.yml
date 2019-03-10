@@ -1,0 +1,139 @@
+- name: Update apt packages
+  become: true
+  apt:
+    upgrade: yes
+
+- name: Install openvpn
+  package:
+   name: "{{ item }}"
+   state: present
+  with_items:
+    - openvpn
+    - easy-rsa
+
+- name: "Remove CA directory"
+  become: yes
+  file:
+    state: absent
+    path: "{{ ansible_env.HOME }}/openvpn-ca/"
+
+- name: "Create CA dir"
+  become: yes
+  command: make-cadir {{ ansible_env.HOME }}/openvpn-ca
+
+- name: Customize CA variable configuration
+  lineinfile:
+    dest: "{{ ansible_env.HOME }}/openvpn-ca/vars"
+    regexp: "^{{ item.property | regex_escape() }}="
+    line: "{{ item.property }}={{ item.value }}"
+  with_items:
+    - { property: 'export KEY_NAME', value: '"server"' }
+    - { property: 'export KEY_COUNTRY', value: '"US"' }
+    - { property: 'export KEY_PROVINCE', value: '"CA"' }
+    - { property: 'export KEY_CITY', value: '"SF"' }
+    - { property: 'export KEY_ORG', value: '"MT"' }
+    - { property: 'export KEY_EMAIL', value: '"mt@mt.com"' }
+    - { property: 'export KEY_OU', value: '"MT"' }
+    - { property: 'export KEY_CONFIG', value: '{{ ansible_env.HOME }}/openvpn-ca/openssl-1.0.0.cnf' }
+    - { property: 'export KEY_DIR', value: '{{ ansible_env.HOME }}/openvpn-ca/keys' }
+
+- name: "Build the certificate authority"
+  become: yes
+  shell: >
+    source vars;
+    ./clean-all;
+    yes "" | ./build-ca;
+  args: 
+    chdir: "{{ ansible_env.HOME }}/openvpn-ca/"
+    executable: /bin/bash
+
+- name: "Build server certificate"
+  become: yes
+  shell: >
+    source vars;
+    ./build-key-server --batch server;
+  args: 
+    chdir: "{{ ansible_env.HOME }}/openvpn-ca/"
+    executable: /bin/bash
+
+- name: "Build Diffie-Hellman parameters and key generation"
+  become: yes
+  shell: >
+    source vars;
+    yes "" | ./build-dh;
+    openvpn --genkey --secret keys/ta.key;
+  args: 
+    chdir: "{{ ansible_env.HOME }}/openvpn-ca/"
+    executable: /bin/bash
+
+- name: "Copy key and certificates to /etc/openvpn"
+  become: yes
+  copy:
+    remote_src: yes
+    src: "{{ ansible_env.HOME }}/openvpn-ca/keys/{{ item }}"
+    dest: "/etc/openvpn/"
+  with_items:
+    - "ca.crt"
+    - "server.crt"
+    - "server.key"
+    - "ta.key"
+    - "dh2048.pem"
+
+- name: "Generate server.conf from sample config"
+  become: yes
+  shell: >
+     gzip -d -c /usr/share/doc/openvpn/examples/sample-config-files/server.conf.gz | sudo tee /etc/openvpn/server.conf > /dev/null
+
+- name: Adjust OpenVPN server configuration
+  lineinfile:
+    dest: "/etc/openvpn/server.conf"
+    regexp: "^{{ item.regex | regex_escape() }}"
+    line: "{{ item.value }}"
+  with_items:
+    - { regex: ';user nobody', value: 'user nobody' }
+    - { regex: ';group nogroup', value: 'group nogroup' }
+    - { regex: ';push "redirect-gateway def1 bypass-dhcp"', value: 'push "redirect-gateway def1 bypass-dhcp"' }
+    - { regex: 'cert server.crt', value: 'cert server.crt' }
+    - { regex: 'key server.key', value: 'key server.key' }
+
+- name: Configuration IP forwarding
+  become: true
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: 1
+    state: present
+
+- name: Add ufw before content
+  become: true
+  blockinfile:
+    path: /etc/ufw/before.rules
+    insertbefore: BOF
+    content: |
+      # NAT table rules
+      *nat
+      :POSTROUTING ACCEPT [0:0]
+      -A POSTROUTING -s 10.8.0.0/8 -o eth0 -j MASQUERADE
+      COMMIT
+
+- name: Customize ufw forwarding policy
+  become: true
+  lineinfile:
+    line: "DEFAULT_FORWARD_POLICY=\"ACCEPT\""
+    path: "/etc/default/ufw"
+    regexp: "^DEFAULT_FORWARD_POLICY=\"DROP\""
+
+- name: Open ufw ports for openvpn and ssh
+  become: true
+  shell:  ufw allow openvpn && ufw allow OpenSSH
+
+- name: Enable ufw
+  become: true
+  shell: ufw --force enable
+
+- name: Start openvpn systemd service
+  become: true
+  systemd:
+    name: openvpn@server
+    state: started
+    daemon_reload: yes
+    enabled: yes

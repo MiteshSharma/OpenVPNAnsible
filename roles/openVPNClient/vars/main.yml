@@ -1,0 +1,3 @@
+---
+client_name: "mitesh"
+destination_key: "{{ playbook_dir }}"
