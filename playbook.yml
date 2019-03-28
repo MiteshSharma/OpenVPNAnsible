@@ -16,4 +16,5 @@
   become_user: root
   become_method: sudo
   roles:
+    - openVPNServer
     - openVPNClient
