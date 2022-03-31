@@ -18,6 +18,9 @@ Steps to execute this project:
 3. Update inventory file with correct IP address of an ubuntu instance
 4. Execute Ansible command mentioned below:
 
-Ansible command: **ansible-playbook playbook.yml**
+ Ansible command: 
+ ```
+ $ ansible-playbook playbook.yml
+ ```
 
 More information about ansible can be found [here](https://www.ansible.com/).
